@@ -71,9 +71,13 @@ function getMessageContainer(node: HTMLElement): HTMLElement {
 
 function findLiveElement(section: Section): HTMLElement | null {
   // 1. Best case: original parsed element still exists.
-  if (section.element && section.element.isConnected) {
-    return section.element;
-  }
+  if (
+  section.element &&
+  section.element.isConnected &&
+  section.element !== document.body
+) {
+  return section.element;
+}
 
   // 2. Old ChatGPT turn id path, if available.
   if (section.turnId && !section.turnId.startsWith("smart-")) {
