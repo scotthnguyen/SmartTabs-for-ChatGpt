@@ -227,3 +227,25 @@
 .smart-tab-rename:hover {
   color: white;
 }
+.smart-tabs-clear-btn {
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.smart-tabs-clear-btn:hover {
+  color: white;
+}
+.smart-tabs-auto-toggle-btn {
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.smart-tabs-auto-toggle-btn:hover {
+  color: white;
+}

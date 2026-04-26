@@ -12,6 +12,16 @@ function normalizeText(text: string): string {
   return text.replace(/^You said:\s*/i, "").replace(/\s+/g, " ").trim();
 }
 
+function simpleHash(text: string): string {
+  let hash = 0;
+
+  for (let i = 0; i < text.length; i++) {
+    hash = (hash * 31 + text.charCodeAt(i)) | 0;
+  }
+
+  return Math.abs(hash).toString(36);
+}
+
 function cleanTitle(text: string): string {
   let t = normalizeText(text);
 
@@ -61,33 +71,40 @@ function makeTitle(userText: string, container: HTMLElement): string {
   return "Untitled";
 }
 
+function findMessageContainer(messageNode: HTMLElement): HTMLElement {
+  return (
+    messageNode.closest<HTMLElement>("[data-turn-id-container]") ||
+    messageNode.closest<HTMLElement>('[data-testid*="conversation-turn"]') ||
+    messageNode.closest<HTMLElement>("article") ||
+    messageNode.parentElement ||
+    messageNode
+  );
+}
+
 export function parseSections(): Section[] {
   const sections: Section[] = [];
 
-  const containers = Array.from(
-    document.querySelectorAll<HTMLElement>("[data-turn-id-container]")
+  const userNodes = Array.from(
+    document.querySelectorAll<HTMLElement>('[data-message-author-role="user"]')
   );
 
-  containers.forEach((container, index) => {
-    const userNode = container.querySelector<HTMLElement>(
-      '[data-message-author-role="user"]'
-    );
-
-    if (!userNode) return;
-
-    const turnId = container.getAttribute("data-turn-id-container") ?? "";
+  userNodes.forEach((userNode, index) => {
+    const container = findMessageContainer(userNode);
     const rawText = normalizeText(userNode.textContent ?? "");
-    const title = makeTitle(rawText, container);
 
-    if (!turnId && !rawText) return;
+    if (!rawText && !hasImage(container) && !getFileName(container)) return;
+
+    const realTurnId = container.getAttribute("data-turn-id-container") ?? "";
+    const generatedId = `smart-${index}-${simpleHash(rawText || container.textContent || "")}`;
+    const id = realTurnId || generatedId;
 
     sections.push({
-      id: turnId || `smart-tab-${index}`,
-      title,
+      id,
+      title: makeTitle(rawText, container),
       element: container,
       rawText,
       domOrder: index,
-      turnId,
+      turnId: realTurnId || generatedId,
       type: "auto"
     });
   });

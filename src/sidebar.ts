@@ -11,9 +11,11 @@ let lastActiveId: string | null = null;
 let isHidden = false;
 
 interface SidebarActions {
+  autoTabsEnabled: boolean;
   onRemoveTab: (section: Section) => void;
   onRenameTab: (section: Section, newTitle: string) => void;
   onToggleHidden: () => void;
+  onToggleAutoTabs: () => void;
 }
 
 export function resetSidebarState() {
@@ -57,14 +59,84 @@ function getScrollableAncestor(el: HTMLElement): HTMLElement | null {
   return null;
 }
 
+function getMessageContainer(node: HTMLElement): HTMLElement {
+  return (
+    node.closest<HTMLElement>("[data-turn-id-container]") ||
+    node.closest<HTMLElement>('[data-testid*="conversation-turn"]') ||
+    node.closest<HTMLElement>("article") ||
+    node.parentElement ||
+    node
+  );
+}
+
 function findLiveElement(section: Section): HTMLElement | null {
-  if (section.turnId) {
-    return document.querySelector(
-      `[data-turn-id-container="${section.turnId}"]`
-    ) as HTMLElement | null;
+  // 1. Best case: original parsed element still exists.
+  if (section.element && section.element.isConnected) {
+    return section.element;
   }
 
-  return null;
+  // 2. Old ChatGPT turn id path, if available.
+  if (section.turnId && !section.turnId.startsWith("smart-")) {
+    const byTurnId = document.querySelector(
+      `[data-turn-id-container="${section.turnId}"]`
+    ) as HTMLElement | null;
+
+    if (byTurnId) return byTurnId;
+  }
+
+  const messageNodes = Array.from(
+    document.querySelectorAll<HTMLElement>(
+      '[data-message-author-role="user"], [data-message-author-role="assistant"]'
+    )
+  );
+
+  const raw = section.rawText.toLowerCase().replace(/\s+/g, " ").trim();
+
+  // 3. If no text, do not guess by duplicate text.
+  // This avoids wrong jumps for images/files.
+  if (!raw) {
+    return null;
+  }
+
+  const chunks = [
+    raw.slice(0, 80),
+    raw.slice(0, 40),
+    raw.slice(10, 70),
+    raw.slice(-60)
+  ].filter((chunk) => chunk.length >= 10);
+
+  const matches = messageNodes.filter((node) => {
+    const text = (node.textContent || "").toLowerCase().replace(/\s+/g, " ");
+
+    return chunks.some((chunk) => text.includes(chunk));
+  });
+
+  if (!matches.length) return null;
+
+  // 4. For duplicates, prefer the match closest to the last known element position
+  // if the old element still has layout info; otherwise use first match.
+  let best = matches[0];
+  let bestScore = -1;
+
+  matches.forEach((node) => {
+    const text = (node.textContent || "").toLowerCase().replace(/\s+/g, " ");
+
+    let score = 0;
+    chunks.forEach((chunk) => {
+      if (text.includes(chunk)) score += chunk.length;
+    });
+
+    if (section.type === "bookmark") {
+      score += 100;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      best = node;
+    }
+  });
+
+  return getMessageContainer(best);
 }
 
 function getVisualTarget(el: HTMLElement): HTMLElement {
@@ -159,6 +231,106 @@ function clearBookmarkHighlights() {
   });
 }
 
+function highlightTextNode(node: Text, start: number, length: number) {
+  const content = node.nodeValue || "";
+  const before = content.slice(0, start);
+  const match = content.slice(start, start + length);
+  const after = content.slice(start + length);
+
+  const span = document.createElement("span");
+  span.className = "smart-bookmark-highlight";
+  span.textContent = match;
+
+  const parent = node.parentNode;
+  if (!parent) return false;
+
+  const frag = document.createDocumentFragment();
+
+  if (before) frag.appendChild(document.createTextNode(before));
+  frag.appendChild(span);
+  if (after) frag.appendChild(document.createTextNode(after));
+
+  parent.replaceChild(frag, node);
+
+  span.scrollIntoView({ behavior: "auto", block: "center" });
+
+  bookmarkHighlightTimeout = window.setTimeout(() => {
+    if (span.isConnected) {
+      span.replaceWith(document.createTextNode(match));
+    }
+
+    bookmarkHighlightTimeout = null;
+  }, 3000);
+
+  return true;
+}
+
+function highlightWholeNode(node: Text) {
+  const content = node.nodeValue || "";
+  if (!content.trim()) return false;
+
+  const span = document.createElement("span");
+  span.className = "smart-bookmark-highlight";
+  span.textContent = content;
+
+  const parent = node.parentNode;
+  if (!parent) return false;
+
+  parent.replaceChild(span, node);
+
+  span.scrollIntoView({ behavior: "auto", block: "center" });
+
+  bookmarkHighlightTimeout = window.setTimeout(() => {
+    if (span.isConnected) {
+      span.replaceWith(document.createTextNode(content));
+    }
+
+    bookmarkHighlightTimeout = null;
+  }, 3000);
+
+  return true;
+}
+
+function highlightBestPartialMatch(container: HTMLElement, text: string) {
+  const words = text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .split(/\s+/)
+    .filter((word) => word.length > 3);
+
+  if (!words.length) return false;
+
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+
+  let node: Text | null;
+  let bestNode: Text | null = null;
+  let bestScore = 0;
+
+  while ((node = walker.nextNode() as Text | null)) {
+    const content = node.nodeValue || "";
+    const normalizedContent = content.toLowerCase();
+
+    if (!content.trim()) continue;
+
+    let score = 0;
+
+    words.forEach((word) => {
+      if (normalizedContent.includes(word)) {
+        score++;
+      }
+    });
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestNode = node;
+    }
+  }
+
+  if (!bestNode || bestScore === 0) return false;
+
+  return highlightWholeNode(bestNode);
+}
+
 function highlightExactText(container: HTMLElement, text: string) {
   if (!text) return;
 
@@ -177,50 +349,33 @@ function highlightExactText(container: HTMLElement, text: string) {
     const content = node.nodeValue;
     if (!content) continue;
 
-    const normalizedContent = content.toLowerCase();
-const normalizedText = text.toLowerCase().trim();
+    const normalizedContent = content.toLowerCase().replace(/\s+/g, " ");
+    const normalizedText = text.toLowerCase().replace(/\s+/g, " ").trim();
 
-// try exact
-let index = normalizedContent.indexOf(normalizedText);
+    let index = normalizedContent.indexOf(normalizedText);
+    let matchLength = text.length;
 
-// fallback: try substring chunks if exact fails
-if (index === -1 && normalizedText.length > 20) {
-  const chunk = normalizedText.slice(5, -5); // remove edges
-  index = normalizedContent.indexOf(chunk);
-}
+    if (index === -1 && normalizedText.length > 10) {
+      const fallbackText = normalizedText.slice(1);
+      index = normalizedContent.indexOf(fallbackText);
+      matchLength = fallbackText.length;
+    }
+
+    if (index === -1 && normalizedText.length > 20) {
+      const chunk = normalizedText.slice(5, -5);
+      index = normalizedContent.indexOf(chunk);
+      matchLength = chunk.length;
+    }
+
     if (index === -1) continue;
 
-    const before = content.slice(0, index);
-    const match = content.slice(index, index + text.length);
-    const after = content.slice(index + text.length);
-
-    const span = document.createElement("span");
-    span.className = "smart-bookmark-highlight";
-    span.textContent = match;
-
-    const parent = node.parentNode;
-    if (!parent) return;
-
-    const frag = document.createDocumentFragment();
-
-    if (before) frag.appendChild(document.createTextNode(before));
-    frag.appendChild(span);
-    if (after) frag.appendChild(document.createTextNode(after));
-
-    parent.replaceChild(frag, node);
-
-    span.scrollIntoView({ behavior: "auto", block: "center" });
-
-    bookmarkHighlightTimeout = window.setTimeout(() => {
-      if (span.isConnected) {
-        span.replaceWith(document.createTextNode(match));
-      }
-
-      bookmarkHighlightTimeout = null;
-    }, 3000);
-
-    return;
+    if (highlightTextNode(node, index, matchLength)) {
+      return;
+    }
   }
+
+  const partialWorked = highlightBestPartialMatch(container, text);
+  if (partialWorked) return;
 
   container.classList.add("smart-tab-highlight");
 
@@ -228,6 +383,29 @@ if (index === -1 && normalizedText.length > 20) {
     container.classList.remove("smart-tab-highlight");
     bookmarkHighlightTimeout = null;
   }, 1400);
+}
+
+function highlightBookmarkWhenReady(section: Section) {
+  const tryHighlight = (attempts = 0) => {
+    const refreshedLive = findLiveElement(section);
+    if (!refreshedLive) return;
+
+    const text = refreshedLive.textContent || "";
+
+    if (text.length > 50) {
+      const refreshedTarget = getVisualTarget(refreshedLive);
+      highlightExactText(refreshedTarget, section.rawText);
+      return;
+    }
+
+    if (attempts < 8) {
+      window.setTimeout(() => {
+        tryHighlight(attempts + 1);
+      }, 200);
+    }
+  };
+
+  tryHighlight();
 }
 
 function setupScrollTracking() {
@@ -336,20 +514,11 @@ function createTabRow(section: Section, actions: SidebarActions) {
 
     const target = getVisualTarget(live);
 
-    console.log("[SmartTabs] clicked tab", {
-  type: section.type,
-  title: section.title,
-  rawText: section.rawText,
-  turnId: section.turnId,
-  liveFound: Boolean(live),
-  livePreview: live.textContent?.slice(0, 300)
-});
-
     jumpToTarget(target);
     setActiveTab(section);
 
     if (section.type === "bookmark") {
-      highlightExactText(target, section.rawText);
+      highlightBookmarkWhenReady(section);
     } else {
       window.setTimeout(() => {
         target.classList.add("smart-tab-highlight");
@@ -418,6 +587,15 @@ export function renderSidebar(sections: Section[], actions: SidebarActions) {
   title.className = "smart-tabs-title";
   title.textContent = "Smart Tabs";
 
+  const autoToggle = document.createElement("button");
+  autoToggle.className = "smart-tabs-auto-toggle-btn";
+  autoToggle.textContent = actions.autoTabsEnabled ? "Tabs On" : "Tabs Off";
+  autoToggle.title = "Toggle automatic tabs";
+
+  autoToggle.onclick = () => {
+    actions.onToggleAutoTabs();
+  };
+
   const hide = document.createElement("button");
   hide.className = "smart-tabs-hide-btn";
   hide.textContent = "Hide";
@@ -431,6 +609,7 @@ export function renderSidebar(sections: Section[], actions: SidebarActions) {
   };
 
   header.appendChild(title);
+  header.appendChild(autoToggle);
   header.appendChild(hide);
   sidebar.appendChild(header);
 

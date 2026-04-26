@@ -1,11 +1,18 @@
 import { parseSections, type Section } from "./parser";
 import { renderSidebar, resetSidebarState } from "./sidebar";
 
+console.log("[SmartTabs] content script loaded", window.location.href);
+
 let updateTimeout: number | null = null;
 let currentChatKey = "";
+let autoTabsEnabled = true;
+
+const STORAGE_KEY = "smart-tabs-bookmarks-v1";
 
 const sectionMap = new Map<string, Section>();
 const removedKeys = new Set<string>();
+
+type StoredBookmark = Omit<Section, "element">;
 
 function getKey(section: Section): string {
   return section.id || section.turnId || section.rawText.toLowerCase();
@@ -15,15 +22,72 @@ function getChatKey(): string {
   return window.location.pathname;
 }
 
+function isInChat(): boolean {
+  return window.location.pathname.startsWith("/c/");
+}
+
+function simpleHash(text: string): string {
+  let hash = 0;
+
+  for (let i = 0; i < text.length; i++) {
+    hash = (hash * 31 + text.charCodeAt(i)) | 0;
+  }
+
+  return Math.abs(hash).toString(36);
+}
+
+function removeSidebarFromPage() {
+  document.getElementById("smart-tabs-sidebar")?.remove();
+  document.getElementById("smart-tabs-collapsed")?.remove();
+}
+
+function getStoredBookmarks(): Record<string, StoredBookmark[]> {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveBookmarksForCurrentChat() {
+  if (!currentChatKey) return;
+
+  const allBookmarks = getStoredBookmarks();
+
+  const bookmarks: StoredBookmark[] = Array.from(sectionMap.values())
+    .filter((section) => section.type === "bookmark")
+    .map(({ element, ...rest }) => rest);
+
+  allBookmarks[currentChatKey] = bookmarks;
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(allBookmarks));
+}
+
+function loadBookmarksForCurrentChat() {
+  const allBookmarks = getStoredBookmarks();
+  const bookmarks = allBookmarks[currentChatKey] || [];
+
+  bookmarks.forEach((bookmark) => {
+    const restored: Section = {
+      ...bookmark,
+      element: document.body
+    };
+
+    sectionMap.set(getKey(restored), restored);
+  });
+}
+
 function resetForNewChat() {
   sectionMap.clear();
   removedKeys.clear();
   resetSidebarState();
+  loadBookmarksForCurrentChat();
 }
 
 function getOrderedSections(): Section[] {
   return Array.from(sectionMap.values())
     .filter((section) => !removedKeys.has(getKey(section)))
+    .filter((section) => autoTabsEnabled || section.type === "bookmark")
     .sort((a, b) => {
       if (a.type === "bookmark" && b.type !== "bookmark") return -1;
       if (a.type !== "bookmark" && b.type === "bookmark") return 1;
@@ -38,14 +102,18 @@ function getOrderedSections(): Section[] {
 
 function renderCurrentSidebar() {
   renderSidebar(getOrderedSections(), {
+    autoTabsEnabled,
     onRemoveTab: removeTab,
     onRenameTab: renameTab,
-    onToggleHidden: () => {}
+    onToggleHidden: () => {},
+    onToggleAutoTabs: toggleAutoTabs
   });
 }
 
 function mergeSections(newSections: Section[]) {
   newSections.forEach((section) => {
+    if (!autoTabsEnabled && section.type !== "bookmark") return;
+
     const key = getKey(section);
     const existing = sectionMap.get(key);
 
@@ -64,6 +132,12 @@ function mergeSections(newSections: Section[]) {
 
 function removeTab(section: Section) {
   removedKeys.add(getKey(section));
+
+  if (section.type === "bookmark") {
+    sectionMap.delete(getKey(section));
+    saveBookmarksForCurrentChat();
+  }
+
   renderCurrentSidebar();
 }
 
@@ -78,18 +152,58 @@ function renameTab(section: Section, newTitle: string) {
     title: newTitle
   });
 
+  if (existing.type === "bookmark") {
+    saveBookmarksForCurrentChat();
+  }
+
   renderCurrentSidebar();
 }
 
+function toggleAutoTabs() {
+  autoTabsEnabled = !autoTabsEnabled;
+
+  if (!autoTabsEnabled) {
+    for (const section of Array.from(sectionMap.values())) {
+      if (section.type !== "bookmark") {
+        sectionMap.delete(getKey(section));
+      }
+    }
+  }
+
+  renderCurrentSidebar();
+}
+
+function findBookmarkContainer(anchorElement: HTMLElement): HTMLElement | null {
+  const messageNode = anchorElement.closest<HTMLElement>(
+    '[data-message-author-role="user"], [data-message-author-role="assistant"]'
+  );
+
+  if (!messageNode) return null;
+
+  return (
+    messageNode.closest<HTMLElement>("[data-turn-id-container]") ||
+    messageNode.closest<HTMLElement>('[data-testid*="conversation-turn"]') ||
+    messageNode.closest<HTMLElement>("article") ||
+    messageNode.parentElement ||
+    messageNode
+  );
+}
+
 function createBookmarkFromSelection() {
+  if (!isInChat()) return;
+
   const selection = window.getSelection();
   let selectedText = selection?.toString().trim();
 
-if (selectedText && selectedText.length > 100) {
-  selectedText = selectedText.slice(0, 100);
-}
-
   if (!selection || !selectedText) return;
+
+  const range = selection.getRangeAt(0).cloneRange();
+
+  if (range.startOffset > 0) {
+    range.setStart(range.startContainer, range.startOffset - 1);
+  }
+
+  selectedText = range.toString().trim();
 
   const anchorNode = selection.anchorNode;
   const anchorElement =
@@ -99,13 +213,14 @@ if (selectedText && selectedText.length > 100) {
 
   if (!anchorElement) return;
 
-  const container = anchorElement.closest(
-    "[data-turn-id-container]"
-  ) as HTMLElement | null;
-
+  const container = findBookmarkContainer(anchorElement);
   if (!container) return;
 
-  const turnId = container.getAttribute("data-turn-id-container") ?? "";
+  const containerText = container.textContent || "";
+  const realTurnId = container.getAttribute("data-turn-id-container") ?? "";
+  const generatedTurnId = `smart-bookmark-target-${simpleHash(containerText)}`;
+  const turnId = realTurnId || generatedTurnId;
+
   const bookmarkId = `bookmark-${turnId}-${Date.now()}`;
 
   const bookmark: Section = {
@@ -118,14 +233,8 @@ if (selectedText && selectedText.length > 100) {
     type: "bookmark"
   };
 
-  console.log("[SmartTabs] created bookmark", {
-  selectedText,
-  turnId,
-  bookmarkId,
-  containerPreview: container.textContent?.slice(0, 300)
-});
-
   sectionMap.set(getKey(bookmark), bookmark);
+  saveBookmarksForCurrentChat();
   renderCurrentSidebar();
 
   selection.removeAllRanges();
@@ -134,16 +243,27 @@ if (selectedText && selectedText.length > 100) {
 function init() {
   const newChatKey = getChatKey();
 
+  if (!isInChat()) {
+    resetForNewChat();
+    removeSidebarFromPage();
+    currentChatKey = newChatKey;
+    return;
+  }
+
   if (newChatKey !== currentChatKey) {
     currentChatKey = newChatKey;
     resetForNewChat();
+    renderCurrentSidebar();
   }
 
   const parsed = parseSections();
 
-  if (parsed.length > 0) {
-    mergeSections(parsed);
-  }
+  console.log("[SmartTabs] parsed sections", {
+    count: parsed.length,
+    userNodes: document.querySelectorAll('[data-message-author-role="user"]').length
+  });
+
+  mergeSections(parsed);
 }
 
 function shouldIgnoreMutation(mutations: MutationRecord[]): boolean {
@@ -177,7 +297,7 @@ function observeChanges() {
 
   let lastHref = window.location.href;
 
-  setInterval(() => {
+  window.setInterval(() => {
     if (window.location.href !== lastHref) {
       lastHref = window.location.href;
       scheduleInit();
@@ -198,8 +318,9 @@ document.addEventListener("keydown", (event) => {
 });
 
 window.addEventListener("load", () => {
-  setTimeout(() => {
+  window.setTimeout(() => {
     currentChatKey = getChatKey();
+    resetForNewChat();
     init();
     observeChanges();
   }, 1500);
