@@ -3,6 +3,7 @@ export interface Section {
   title: string;
   element: HTMLElement;
   rawText: string;
+  contextText?: string;
   domOrder: number;
   turnId: string;
   type?: "auto" | "bookmark";

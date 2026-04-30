@@ -223,11 +223,17 @@ function createBookmarkFromSelection() {
 
   const bookmarkId = `bookmark-${turnId}-${Date.now()}`;
 
+  const contextText = (container.textContent || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 1500);
+
   const bookmark: Section = {
     id: bookmarkId,
     title: `★ ${selectedText.slice(0, 60)}`,
     element: container,
     rawText: selectedText,
+    contextText,
     domOrder: Date.now(),
     turnId,
     type: "bookmark"

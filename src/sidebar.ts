@@ -89,58 +89,67 @@ function findLiveElement(section: Section): HTMLElement | null {
   }
 
   const messageNodes = Array.from(
-    document.querySelectorAll<HTMLElement>(
-      '[data-message-author-role="user"], [data-message-author-role="assistant"]'
-    )
-  );
+  document.querySelectorAll<HTMLElement>(
+    '[data-message-author-role="user"], [data-message-author-role="assistant"]'
+  )
+);
 
-  const raw = section.rawText.toLowerCase().replace(/\s+/g, " ").trim();
+const raw = section.rawText.toLowerCase().replace(/\s+/g, " ").trim();
 
-  // 3. If no text, do not guess by duplicate text.
-  // This avoids wrong jumps for images/files.
-  if (!raw) {
-    return null;
+const context = (section.contextText || "")
+  .toLowerCase()
+  .replace(/\s+/g, " ")
+  .trim();
+
+if (!raw && !context) {
+  return null;
+}
+
+const rawChunks = [
+  raw.slice(0, 80),
+  raw.slice(0, 40),
+  raw.slice(10, 70),
+  raw.slice(-60)
+].filter((chunk) => chunk.length >= 10);
+
+const contextChunks = [
+  context.slice(0, 120),
+  context.slice(120, 260),
+  context.slice(260, 420),
+  context.slice(-160)
+].filter((chunk) => chunk.length >= 20);
+
+let best: HTMLElement | null = null;
+let bestScore = -1;
+
+messageNodes.forEach((node) => {
+  const text = (node.textContent || "").toLowerCase().replace(/\s+/g, " ");
+
+  let score = 0;
+
+  rawChunks.forEach((chunk) => {
+    if (text.includes(chunk)) score += 100;
+  });
+
+  contextChunks.forEach((chunk) => {
+    if (text.includes(chunk)) score += 30;
+  });
+
+  if (section.type === "bookmark" && raw && text.includes(raw)) {
+    score += 150;
   }
 
-  const chunks = [
-    raw.slice(0, 80),
-    raw.slice(0, 40),
-    raw.slice(10, 70),
-    raw.slice(-60)
-  ].filter((chunk) => chunk.length >= 10);
+  if (score > bestScore) {
+    bestScore = score;
+    best = node;
+  }
+});
 
-  const matches = messageNodes.filter((node) => {
-    const text = (node.textContent || "").toLowerCase().replace(/\s+/g, " ");
+if (!best || bestScore <= 0) {
+  return null;
+}
 
-    return chunks.some((chunk) => text.includes(chunk));
-  });
-
-  if (!matches.length) return null;
-
-  // 4. For duplicates, prefer the match closest to the last known element position
-  // if the old element still has layout info; otherwise use first match.
-  let best = matches[0];
-  let bestScore = -1;
-
-  matches.forEach((node) => {
-    const text = (node.textContent || "").toLowerCase().replace(/\s+/g, " ");
-
-    let score = 0;
-    chunks.forEach((chunk) => {
-      if (text.includes(chunk)) score += chunk.length;
-    });
-
-    if (section.type === "bookmark") {
-      score += 100;
-    }
-
-    if (score > bestScore) {
-      bestScore = score;
-      best = node;
-    }
-  });
-
-  return getMessageContainer(best);
+return getMessageContainer(best);
 }
 
 function getVisualTarget(el: HTMLElement): HTMLElement {
