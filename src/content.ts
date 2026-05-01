@@ -7,7 +7,7 @@ let updateTimeout: number | null = null;
 let currentChatKey = "";
 let autoTabsEnabled = true;
 
-const STORAGE_KEY = "smart-tabs-bookmarks-v1";
+const STORAGE_KEY = "smart-tabs-bookmarks-v2";
 
 const sectionMap = new Map<string, Section>();
 const removedKeys = new Set<string>();
@@ -106,14 +106,13 @@ function renderCurrentSidebar() {
     onRemoveTab: removeTab,
     onRenameTab: renameTab,
     onToggleHidden: () => {},
-    onToggleAutoTabs: toggleAutoTabs
+    onToggleAutoTabs: toggleAutoTabs,
+    onCreateBookmark: createLocationBookmark
   });
 }
 
 function mergeSections(newSections: Section[]) {
   newSections.forEach((section) => {
-    if (!autoTabsEnabled && section.type !== "bookmark") return;
-
     const key = getKey(section);
     const existing = sectionMap.get(key);
 
@@ -161,83 +160,32 @@ function renameTab(section: Section, newTitle: string) {
 
 function toggleAutoTabs() {
   autoTabsEnabled = !autoTabsEnabled;
-
-  if (!autoTabsEnabled) {
-    for (const section of Array.from(sectionMap.values())) {
-      if (section.type !== "bookmark") {
-        sectionMap.delete(getKey(section));
-      }
-    }
-  }
-
   renderCurrentSidebar();
 }
 
-function findBookmarkContainer(anchorElement: HTMLElement): HTMLElement | null {
-  const messageNode = anchorElement.closest<HTMLElement>(
-    '[data-message-author-role="user"], [data-message-author-role="assistant"]'
-  );
-
-  if (!messageNode) return null;
-
-  return (
-    messageNode.closest<HTMLElement>("[data-turn-id-container]") ||
-    messageNode.closest<HTMLElement>('[data-testid*="conversation-turn"]') ||
-    messageNode.closest<HTMLElement>("article") ||
-    messageNode.parentElement ||
-    messageNode
-  );
-}
-
-function createBookmarkFromSelection() {
-  if (!isInChat()) return;
-
-  const selection = window.getSelection();
-  let selectedText = selection?.toString().trim();
-
-  if (!selection || !selectedText) return;
-
-  const range = selection.getRangeAt(0).cloneRange();
-
-  if (range.startOffset > 0) {
-    range.setStart(range.startContainer, range.startOffset - 1);
-  }
-
-  selectedText = range.toString().trim();
-
-  const anchorNode = selection.anchorNode;
-  const anchorElement =
-    anchorNode instanceof HTMLElement
-      ? anchorNode
-      : anchorNode?.parentElement;
-
-  if (!anchorElement) return;
-
-  const container = findBookmarkContainer(anchorElement);
-  if (!container) return;
-
-  const containerText = container.textContent || "";
-  const realTurnId = container.getAttribute("data-turn-id-container") ?? "";
-  const generatedTurnId = `smart-bookmark-target-${simpleHash(containerText)}`;
-  const turnId = realTurnId || generatedTurnId;
-
-  const bookmarkId = `bookmark-${turnId}-${Date.now()}`;
+function createLocationBookmark(section: Section, name: string) {
+  const contextText = (
+    section.contextText ||
+    section.element?.textContent ||
+    section.rawText ||
+    ""
+  )
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 1500);
 
   const bookmark: Section = {
-    id: bookmarkId,
-    title: `★ ${selectedText.slice(0, 60)}`,
-    element: container,
-    rawText: selectedText,
+    ...section,
+    id: `bookmark-${Date.now()}-${simpleHash(section.id)}`,
+    title: `★ ${name}`,
+    contextText,
     domOrder: Date.now(),
-    turnId,
     type: "bookmark"
   };
 
   sectionMap.set(getKey(bookmark), bookmark);
   saveBookmarksForCurrentChat();
   renderCurrentSidebar();
-
-  selection.removeAllRanges();
 }
 
 function init() {
@@ -257,12 +205,6 @@ function init() {
   }
 
   const parsed = parseSections();
-
-  console.log("[SmartTabs] parsed sections", {
-    count: parsed.length,
-    userNodes: document.querySelectorAll('[data-message-author-role="user"]').length
-  });
-
   mergeSections(parsed);
 }
 
@@ -304,18 +246,6 @@ function observeChanges() {
     }
   }, 500);
 }
-
-document.addEventListener("keydown", (event) => {
-  const isBookmarkShortcut =
-    event.shiftKey &&
-    (event.metaKey || event.ctrlKey) &&
-    event.key.toLowerCase() === "b";
-
-  if (!isBookmarkShortcut) return;
-
-  event.preventDefault();
-  createBookmarkFromSelection();
-});
 
 window.addEventListener("load", () => {
   window.setTimeout(() => {
