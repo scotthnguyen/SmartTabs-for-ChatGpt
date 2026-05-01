@@ -174,6 +174,11 @@ function createLocationBookmark(section: Section, name: string) {
     .trim()
     .slice(0, 1500);
 
+  const contextText = (container.textContent || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 1500);
+
   const bookmark: Section = {
     ...section,
     id: `bookmark-${Date.now()}-${simpleHash(section.id)}`,
