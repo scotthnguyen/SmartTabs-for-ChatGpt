@@ -4,6 +4,10 @@ export interface Section {
   element: HTMLElement;
   rawText: string;
   contextText?: string;
+  selectedText?: string;
+  role?: "user" | "assistant";
+  scrollTop?: number;
+  offsetWithinMessage?: number;
   domOrder: number;
   turnId: string;
   type?: "auto" | "bookmark";
@@ -23,21 +27,6 @@ function simpleHash(text: string): string {
   return Math.abs(hash).toString(36);
 }
 
-function cleanTitle(text: string): string {
-  let t = normalizeText(text);
-
-  t = t.replace(
-    /^(can you|could you|help me|please|i need|how do i|what about|also)\s+/i,
-    ""
-  );
-
-  const words = t.split(" ").slice(0, 7);
-  const result = words.join(" ").trim();
-
-  if (!result) return "";
-  return result.charAt(0).toUpperCase() + result.slice(1);
-}
-
 function getFileName(container: HTMLElement): string | null {
   const text = container.textContent ?? "";
 
@@ -53,21 +42,19 @@ function hasImage(container: HTMLElement): boolean {
 }
 
 function makeTitle(userText: string, container: HTMLElement): string {
-  const cleanedText = cleanTitle(userText);
   const fileName = getFileName(container);
   const imageAttached = hasImage(container);
-
-  let attachmentLabel = "";
+  const cleanedText = normalizeText(userText);
 
   if (fileName) {
-    attachmentLabel = fileName;
-  } else if (imageAttached) {
-    attachmentLabel = "Image attached";
+    const lower = fileName.toLowerCase();
+
+    if (lower.endsWith(".pdf")) return "PDF attached";
+    return "File attached";
   }
 
-  if (cleanedText && attachmentLabel) return `${cleanedText} — ${attachmentLabel}`;
+  if (imageAttached) return "Image attached";
   if (cleanedText) return cleanedText;
-  if (attachmentLabel) return attachmentLabel;
 
   return "Untitled";
 }
@@ -96,14 +83,23 @@ export function parseSections(): Section[] {
     if (!rawText && !hasImage(container) && !getFileName(container)) return;
 
     const realTurnId = container.getAttribute("data-turn-id-container") ?? "";
-    const generatedId = `smart-${index}-${simpleHash(rawText || container.textContent || "")}`;
+    const generatedId = `smart-${index}-${simpleHash(
+      rawText || container.textContent || ""
+    )}`;
     const id = realTurnId || generatedId;
+
+    const contextText = (container.textContent || "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 1500);
 
     sections.push({
       id,
       title: makeTitle(rawText, container),
       element: container,
       rawText,
+      contextText,
+      role: "user",
       domOrder: index,
       turnId: realTurnId || generatedId,
       type: "auto"
