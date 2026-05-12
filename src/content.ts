@@ -196,11 +196,15 @@ function init() {
   if (newChatKey !== currentChatKey) {
     currentChatKey = newChatKey;
     resetForNewChat();
-    renderCurrentSidebar();
+    removeSidebarFromPage();
+    window.setTimeout(() => {
+      renderCurrentSidebar();
+      mergeSections(parseSections());
+    }, 400);
+    return;
   }
 
-  const parsed = parseSections();
-  mergeSections(parsed);
+  mergeSections(parseSections());
 }
 
 function shouldIgnoreMutation(mutations: MutationRecord[]): boolean {

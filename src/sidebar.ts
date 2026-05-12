@@ -66,6 +66,8 @@ function applyNavPosition() {
   const sidebar = document.getElementById(SIDEBAR_ID);
   const collapsed = document.getElementById(COLLAPSED_ID);
 
+  if (!sidebar && !collapsed) return;
+
   const main = document.querySelector("main");
   const stickyTop = document.querySelector<HTMLElement>('[class*="sticky"][class*="top"]');
 
@@ -86,6 +88,8 @@ function applyNavPosition() {
 }
 
 function startNavTracking() {
+  if (!document.getElementById(SIDEBAR_ID) && !document.getElementById(COLLAPSED_ID)) return;
+
   if (navObserver) {
     navObserver.disconnect();
   }
