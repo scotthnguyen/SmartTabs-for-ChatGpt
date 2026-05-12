@@ -17,7 +17,7 @@ function normalizeText(text: string): string {
   return text.replace(/^You said:\s*/i, "").replace(/\s+/g, " ").trim();
 }
 
-function simpleHash(text: string): string {
+export function simpleHash(text: string): string {
   let hash = 0;
 
   for (let i = 0; i < text.length; i++) {

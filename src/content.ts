@@ -1,4 +1,4 @@
-import { parseSections, type Section } from "./parser";
+import { parseSections, simpleHash, type Section } from "./parser";
 import { renderSidebar, resetSidebarState } from "./sidebar";
 
 console.log("[SmartTabs] content script loaded", window.location.href);
@@ -24,16 +24,6 @@ function getChatKey(): string {
 
 function isInChat(): boolean {
   return window.location.pathname.startsWith("/c/");
-}
-
-function simpleHash(text: string): string {
-  let hash = 0;
-
-  for (let i = 0; i < text.length; i++) {
-    hash = (hash * 31 + text.charCodeAt(i)) | 0;
-  }
-
-  return Math.abs(hash).toString(36);
 }
 
 function removeSidebarFromPage() {
@@ -146,9 +136,14 @@ function renameTab(section: Section, newTitle: string) {
 
   if (!existing) return;
 
+  const title =
+    existing.type === "bookmark" && !newTitle.startsWith("★ ")
+      ? `★ ${newTitle}`
+      : newTitle;
+
   sectionMap.set(key, {
     ...existing,
-    title: newTitle
+    title
   });
 
   if (existing.type === "bookmark") {
@@ -170,11 +165,6 @@ function createLocationBookmark(section: Section, name: string) {
     section.rawText ||
     ""
   )
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 1500);
-
-  const contextText = (container.textContent || "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 1500);

@@ -1,8 +1,5 @@
 #smart-tabs-sidebar {
   position: fixed;
-  left: 270px;
-  top: 50%;
-  transform: translateY(-50%);
   width: 220px;
   max-height: 72vh;
   overflow-y: auto;
@@ -241,20 +238,6 @@
   color: white;
 }
 
-/* Old auto toggle class kept for compatibility */
-
-.smart-tabs-auto-toggle-btn {
-  border: none;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.45);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.smart-tabs-auto-toggle-btn:hover {
-  color: white;
-}
-
 /* Highlights */
 
 .smart-tab-highlight {
@@ -274,9 +257,6 @@
 
 #smart-tabs-collapsed {
   position: fixed;
-  left: 270px;
-  top: 50%;
-  transform: translateY(-50%);
   z-index: 100;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(32, 33, 35, 0.5);

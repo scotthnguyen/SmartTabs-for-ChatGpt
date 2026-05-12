@@ -11,6 +11,8 @@ let lastActiveId: string | null = null;
 let isHidden = false;
 let latestActions: SidebarActions | null = null;
 let keybindInstalled = false;
+let navObserver: ResizeObserver | null = null;
+let navMutationObserver: MutationObserver | null = null;
 
 interface SidebarActions {
   autoTabsEnabled: boolean;
@@ -38,6 +40,16 @@ export function resetSidebarState() {
     highlightTimeout = null;
   }
 
+  if (navObserver) {
+    navObserver.disconnect();
+    navObserver = null;
+  }
+
+  if (navMutationObserver) {
+    navMutationObserver.disconnect();
+    navMutationObserver = null;
+  }
+
   document.querySelectorAll(".smart-tab-highlight").forEach((el) => {
     el.classList.remove("smart-tab-highlight");
   });
@@ -48,6 +60,60 @@ export function resetSidebarState() {
 
   activeScrollContainer = null;
   lastActiveId = null;
+}
+
+function applyNavPosition() {
+  const sidebar = document.getElementById(SIDEBAR_ID);
+  const collapsed = document.getElementById(COLLAPSED_ID);
+
+  const main = document.querySelector("main");
+  const stickyTop = document.querySelector<HTMLElement>('[class*="sticky"][class*="top"]');
+
+  const leftOffset = main?.getBoundingClientRect().left ?? 270;
+  const topOffset = stickyTop?.getBoundingClientRect().bottom ?? 60;
+
+  const left = `${leftOffset + 12}px`;
+  const top = `${topOffset + 8}px`;
+
+  if (sidebar) {
+    sidebar.style.left = left;
+    sidebar.style.top = top;
+  }
+  if (collapsed) {
+    collapsed.style.left = left;
+    collapsed.style.top = top;
+  }
+}
+
+function startNavTracking() {
+  if (navObserver) {
+    navObserver.disconnect();
+  }
+  if (navMutationObserver) {
+    navMutationObserver.disconnect();
+  }
+
+  applyNavPosition();
+
+  const ro = new ResizeObserver(applyNavPosition);
+  const nav = document.querySelector("nav");
+  const stickyTop = document.querySelector<HTMLElement>('[class*="sticky"][class*="top"]');
+  const main = document.querySelector("main");
+
+  if (nav) ro.observe(nav);
+  if (stickyTop) ro.observe(stickyTop);
+  if (main) ro.observe(main);
+
+  navObserver = ro;
+
+  const mo = new MutationObserver(applyNavPosition);
+  mo.observe(document.body, {
+    attributes: true,
+    subtree: true,
+    attributeFilter: ["class", "style", "data-state"],
+  });
+
+  navMutationObserver = mo;
 }
 
 function getScrollableAncestor(el: HTMLElement): HTMLElement | null {
@@ -618,6 +684,7 @@ function showCollapsed(actions: SidebarActions) {
     btn.id = COLLAPSED_ID;
     btn.textContent = "Tabs";
     document.body.appendChild(btn);
+    startNavTracking();
   }
 
   btn.onclick = () => {
@@ -775,6 +842,7 @@ export function renderSidebar(sections: Section[], actions: SidebarActions) {
     sidebar = document.createElement("div");
     sidebar.id = SIDEBAR_ID;
     document.body.appendChild(sidebar);
+    startNavTracking();
   }
 
   sidebar.innerHTML = "";
